@@ -17,14 +17,19 @@ import json
 import uuid
 
 from flask import Flask, jsonify, request
+from urllib.parse import urlparse
 
 
 class Blockchain:
     def __init__(self, *args, **kwargs):
         self.chain = []  # 链
         self.current_transcations = []  # 当前交易信息
-
+        self.nodes = set()  # 节点
         self.new_block(proof=100, previous_hash=1)  # 创世块
+
+    def register_node(self, address: str):  # 注册节点
+        parse_url = urlparse(address)
+        self.nodes.add(parse_url.netloc)
 
     def new_block(self, proof, previous_hash=None):  # 新区块
         block = {
@@ -48,7 +53,7 @@ class Blockchain:
 
     @staticmethod
     def hash(block):  # 计算区块的哈希值
-        block_string = json.dumps(block,sort_keys=True).encode()
+        block_string = json.dumps(block, sort_keys=True).encode()
         return (hashlib.sha256(block_string)).hexdigest()
 
     @property
@@ -111,6 +116,23 @@ def mining():  # 挖矿方法
     }
 
     return jsonify(response), 200
+
+
+@app.route('/nodes/register', methods=['POST'])
+def register_nodes():
+    values = request.get_json()
+    if values is None:
+        return 'Error : can not be empty', 400
+    nodes = values.get('nodes')
+
+    for node in nodes:
+        blockchain.register_node(node)
+
+    response = {
+        "message": 'New nodes have been added',
+        "total_nodes": list(blockchain.nodes)
+    }
+    return jsonify(response), 201
 
 
 app.run('0.0.0.0', 9777)
