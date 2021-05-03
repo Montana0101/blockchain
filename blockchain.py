@@ -15,16 +15,18 @@ import time
 import hashlib
 import json
 import uuid
+import requests
 
 from flask import Flask, jsonify, request
 from urllib.parse import urlparse
+from argparse import ArgumentParser
 
 
 class Blockchain:
     def __init__(self, *args, **kwargs):
         self.chain = []  # 链
         self.current_transcations = []  # 当前交易信息
-        self.nodes = set()  # 节点
+        self.nodes = set([])  # 节点
         self.new_block(proof=100, previous_hash=1)  # 创世块
 
     def register_node(self, address: str):  # 注册节点
@@ -69,8 +71,40 @@ class Blockchain:
     def valid_proof(self, last_proof: int, proof: int):
         guess = f'{last_proof}{proof}'.encode()
         guess_hash = hashlib.sha256(guess).hexdigest()
-        print(guess_hash)
         return guess_hash[0:4] == '0000'
+
+    def valid_chain(self, chain):
+        last_block = chain[0]
+        current_inx = 1
+        while current_inx < len(chain):
+            block = chain[current_inx]
+
+            if block['previous_hash'] != self.hash(last_block):
+                return False
+            if not self.valid_proof(last_block['proof'], block['proof']):
+                return False
+            last_block = block
+            current_inx += 1
+
+        return True
+
+    def resolve_conflict(self):  # 解决冲突
+        neighbours = self.nodes
+        max_length = len(self.chain)
+        new_chain = None
+
+        for node in neighbours:
+            response = requests.get(f'http://{node}/chain')
+            if response.status_code == 200:
+                length = response.json()['total']
+                chain = response.json()['chain']
+
+                if length > max_length and self.valid_chain(chain):
+                    new_chain = chain
+        if new_chain:
+            self.chain = new_chain
+            return True
+        return False
 
 
 blockchain = Blockchain()
@@ -119,12 +153,11 @@ def mining():  # 挖矿方法
 
 
 @app.route('/nodes/register', methods=['POST'])
-def register_nodes():
+def register_nodes():  # 注册节点
     values = request.get_json()
     if values is None:
         return 'Error : can not be empty', 400
     nodes = values.get('nodes')
-
     for node in nodes:
         blockchain.register_node(node)
 
@@ -135,4 +168,30 @@ def register_nodes():
     return jsonify(response), 201
 
 
-app.run('0.0.0.0', 9777)
+@app.route('/nodes/resolve', methods=['GET'])
+def consensus():
+    isReplaced = blockchain.resolve_conflict()
+    if isReplaced:
+        response = {
+            'message': 'chain was replaced',
+            'new_chain': blockchain.chain
+        }
+    else:
+        response = {
+            'message': 'chain is authority',
+            'new_chain': blockchain.chain
+        }
+    return jsonify(response), 200
+
+
+if __name__ == '__main__':
+    parser = ArgumentParser()
+    parser.add_argument('-p',
+                        '--port',
+                        default=5000,
+                        type=int,
+                        help='listen to port ')
+    args = parser.parse_args()
+    port = args.port
+
+    app.run('0.0.0.0', port)
